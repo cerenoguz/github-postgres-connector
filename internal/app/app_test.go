@@ -306,6 +306,18 @@ func TestSetupErrorsExitWithTheirOwnCode(t *testing.T) {
 			t.Errorf("exit = %d, stderr = %s", code, errOut.String())
 		}
 	})
+	t.Run("misspelled connector key", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		cfg := "database:\n  url: postgres://localhost:1/nothing\nconnectors:\n  - type: github\n    repositories: [acme/widgets]\n    fetch_stat: true\n"
+		if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var out, errOut bytes.Buffer
+		code := Run(context.Background(), []string{"sync", "--config", path}, &out, &errOut)
+		if code != ExitSetup || !strings.Contains(errOut.String(), "unknown key fetch_stat") {
+			t.Errorf("exit = %d, stderr = %s", code, errOut.String())
+		}
+	})
 	t.Run("unknown flag", func(t *testing.T) {
 		var out, errOut bytes.Buffer
 		if code := Run(context.Background(), []string{"sync", "--nope"}, &out, &errOut); code != ExitSetup {
@@ -324,12 +336,12 @@ func TestWriteReport(t *testing.T) {
 
 	writeReport(&out, report)
 
-	want := `CONNECTOR  REPOSITORY    STATUS     READ  INSERTED  DURATION
+	want := `CONNECTOR  RESOURCE      STATUS     READ  INSERTED  DURATION
 github     acme/widgets  ok         120   20        1.234s
 github     acme/broken   failed     100   100       0s
 github     acme/later    cancelled  0     0         0s
 
-3 repositories, 2 failed, 220 commits read, 120 inserted
+3 resources, 2 failed, 220 records read, 120 inserted
 
 Errors:
   github acme/broken: page 2: HTTP 502

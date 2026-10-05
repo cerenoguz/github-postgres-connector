@@ -19,15 +19,15 @@ import (
 // Exit codes.
 const (
 	ExitOK = 0
-	// ExitSyncFailed means the run happened but at least one repository
-	// failed or was cancelled.
+	// ExitSyncFailed means the run happened but at least one resource (for
+	// GitHub, a repository) failed or was cancelled.
 	ExitSyncFailed = 1
 	// ExitSetup means the run could not start: bad flags, bad config, or no
 	// database.
 	ExitSetup = 2
 )
 
-var errSyncFailed = errors.New("one or more repositories failed")
+var errSyncFailed = errors.New("one or more resources failed")
 
 var _ engine.Store = (*store.Store)(nil)
 

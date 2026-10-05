@@ -48,6 +48,12 @@ type Batch struct {
 	Commits []Commit
 }
 
+// Len is the number of records in the batch, of every kind. The engine
+// counts with it, so it never needs to know which kinds exist.
+func (b Batch) Len() int {
+	return len(b.Commits)
+}
+
 // EmitFunc hands a batch to the engine for persistence. A connector must stop
 // and return the error if it fails.
 type EmitFunc func(ctx context.Context, b Batch) error

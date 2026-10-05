@@ -15,7 +15,7 @@ import (
 // the source, how much of it was new, and why anything failed.
 func writeReport(w io.Writer, report engine.Report) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "CONNECTOR\tREPOSITORY\tSTATUS\tREAD\tINSERTED\tDURATION")
+	fmt.Fprintln(tw, "CONNECTOR\tRESOURCE\tSTATUS\tREAD\tINSERTED\tDURATION")
 
 	var read, inserted, failed int
 	for _, r := range report.Results {
@@ -29,7 +29,7 @@ func writeReport(w io.Writer, report engine.Report) {
 	}
 	tw.Flush()
 
-	fmt.Fprintf(w, "\n%d repositories, %d failed, %d commits read, %d inserted\n",
+	fmt.Fprintf(w, "\n%d resources, %d failed, %d records read, %d inserted\n",
 		len(report.Results), failed, read, inserted)
 
 	if failed > 0 {

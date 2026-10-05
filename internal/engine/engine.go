@@ -100,9 +100,9 @@ func (e *Engine) syncResource(ctx context.Context, c connector.Connector, resour
 		if err != nil {
 			return fmt.Errorf("save page %d: %w", b.Page, err)
 		}
-		res.Read += len(b.Commits)
+		res.Read += b.Len()
 		res.Inserted += inserted
-		log.Info("page stored", "page", b.Page, "read", len(b.Commits), "inserted", inserted)
+		log.Info("page stored", "page", b.Page, "read", b.Len(), "inserted", inserted)
 		return nil
 	}
 
