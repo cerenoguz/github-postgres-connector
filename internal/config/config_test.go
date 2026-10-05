@@ -143,3 +143,43 @@ func TestErrorsDoNotEchoSecrets(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestConnectorSettingsRejectUnknownKeys(t *testing.T) {
+	// "fetch_stat" is a typo for "fetch_stats"; it must not be ignored.
+	cfg, err := Parse([]byte("database:\n  url: postgres://localhost/app\nconnectors:\n  - type: github\n    repositories: [a/b]\n    fetch_stat: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Repositories []string `yaml:"repositories"`
+		FetchStats   bool     `yaml:"fetch_stats"`
+	}
+
+	err = cfg.Connectors[0].DecodeSettings(&settings)
+
+	if err == nil || !strings.Contains(err.Error(), "unknown key fetch_stat") {
+		t.Errorf("err = %v, want the typo reported", err)
+	}
+}
+
+func TestConnectorSettingsDoNotIncludeTheCommonKeys(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "ghp_token")
+	cfg, err := Parse([]byte("database:\n  url: postgres://localhost/app\nconnectors:\n  - type: github\n    auth:\n      token: ${GITHUB_TOKEN}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A settings struct with no fields accepts only an entry with no
+	// connector-specific keys: "type" and "auth" must already be consumed.
+	if err := cfg.Connectors[0].DecodeSettings(&struct{}{}); err != nil {
+		t.Errorf("err = %v, want type and auth not to count as settings", err)
+	}
+}
+
+func TestAuthRejectsUnknownKeys(t *testing.T) {
+	_, err := Parse([]byte("database:\n  url: postgres://localhost/app\nconnectors:\n  - type: github\n    auth:\n      tokn: abc\n"))
+
+	if err == nil || !strings.Contains(err.Error(), "unknown key tokn") {
+		t.Errorf("err = %v, want the typo reported", err)
+	}
+}

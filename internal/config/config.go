@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -72,22 +73,57 @@ type ConnectorSpec struct {
 }
 
 func (c *ConnectorSpec) UnmarshalYAML(n *yaml.Node) error {
-	var common struct {
-		Type string `yaml:"type"`
-		Auth Auth   `yaml:"auth"`
+	if n.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: a connector must be a mapping", n.Line)
 	}
-	if err := n.Decode(&common); err != nil {
-		return err
+	// A mapping node lists its keys and values alternately. The common keys
+	// are decoded here and everything else is kept for the connector type.
+	settings := yaml.Node{Kind: yaml.MappingNode, Tag: n.Tag}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		key, value := n.Content[i], n.Content[i+1]
+		switch key.Value {
+		case "type":
+			if err := value.Decode(&c.Type); err != nil {
+				return err
+			}
+		case "auth":
+			if err := strictDecode(value, &c.Auth); err != nil {
+				return fmt.Errorf("auth: %w", err)
+			}
+		default:
+			settings.Content = append(settings.Content, key, value)
+		}
 	}
-	c.Type, c.Auth, c.node = common.Type, common.Auth, *n
+	c.node = settings
 	return nil
 }
 
-// DecodeSettings decodes the connector's entry into v, a struct describing
-// the keys of one connector type.
+// DecodeSettings decodes the connector-specific keys of the entry into v, a
+// struct describing the keys of one connector type. A key that v does not
+// declare is an error.
 func (c ConnectorSpec) DecodeSettings(v any) error {
-	return c.node.Decode(v)
+	return strictDecode(&c.node, v)
 }
+
+// strictDecode decodes a node while rejecting unknown keys. yaml.Node.Decode
+// has no strict mode, so the node is serialised and read back through a
+// decoder that does.
+func strictDecode(n *yaml.Node, v any) error {
+	raw, err := yaml.Marshal(n)
+	if err != nil {
+		return err
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
+		return errors.New(unknownField.ReplaceAllString(err.Error(), "unknown key $1"))
+	}
+	return nil
+}
+
+// unknownField matches yaml's wording for a key the target does not declare,
+// including a line number that is meaningless after re-serialising.
+var unknownField = regexp.MustCompile(`(?s)^yaml: unmarshal errors:\s+line \d+: field (\S+) not found in type .*$`)
 
 // Defaults returns the configuration used for anything the file leaves out.
 func Defaults() Config {
@@ -99,7 +135,9 @@ func Defaults() Config {
 				MaxRetries: 5,
 				BaseDelay:  Duration(500 * time.Millisecond),
 				MaxDelay:   Duration(30 * time.Second),
-				MaxWait:    Duration(time.Hour),
+				// One GitHub quota window plus a margin, so a reset
+				// that is a full hour away is still waited for.
+				MaxWait: Duration(65 * time.Minute),
 			},
 		},
 	}
@@ -190,7 +228,7 @@ func (e *EnvString) UnmarshalYAML(n *yaml.Node) error {
 		return v
 	})
 	if len(missing) > 0 {
-		return fmt.Errorf("line %d: environment variable %s is not set", n.Line, strings.Join(missing, ", "))
+		return fmt.Errorf("environment variable %s is not set", strings.Join(missing, ", "))
 	}
 	*e = EnvString(expanded)
 	return nil

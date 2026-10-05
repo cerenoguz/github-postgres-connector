@@ -15,7 +15,7 @@ http:
     max_retries: 5 # retries after the first attempt
     base_delay: 500ms
     max_delay: 30s
-    max_wait: 1h   # longest rate-limit wait to sit through before failing
+    max_wait: 65m  # longest rate-limit wait to sit through before failing
 
 connectors:
   - type: github

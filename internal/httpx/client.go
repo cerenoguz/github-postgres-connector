@@ -38,7 +38,9 @@ var DefaultRetryPolicy = RetryPolicy{
 	MaxRetries: 5,
 	BaseDelay:  500 * time.Millisecond,
 	MaxDelay:   30 * time.Second,
-	MaxWait:    time.Hour,
+	// GitHub's quota window is one hour; the margin covers the padding added
+	// to a reset time and a little clock skew.
+	MaxWait: 65 * time.Minute,
 }
 
 type Options struct {
@@ -51,6 +53,9 @@ type Options struct {
 	Retry   RetryPolicy
 	// Classify decides what a response means; nil means DefaultClassifier.
 	Classify Classifier
+	// MaxBodyBytes caps the size of a response body; zero means 64 MiB. A
+	// larger response fails the request without being retried.
+	MaxBodyBytes int64
 	// Headers are sent on every request.
 	Headers map[string]string
 	Logger  *slog.Logger
@@ -72,6 +77,7 @@ type Client struct {
 	timeout  time.Duration
 	retry    RetryPolicy
 	classify Classifier
+	maxBody  int64
 	headers  map[string]string
 	log      *slog.Logger
 
@@ -91,6 +97,7 @@ func New(o Options) *Client {
 		timeout:  o.Timeout,
 		retry:    o.Retry,
 		classify: o.Classify,
+		maxBody:  o.MaxBodyBytes,
 		headers:  o.Headers,
 		log:      o.Logger,
 		now:      time.Now,
@@ -105,6 +112,9 @@ func New(o Options) *Client {
 	}
 	if c.timeout <= 0 {
 		c.timeout = 30 * time.Second
+	}
+	if c.maxBody <= 0 {
+		c.maxBody = 64 << 20
 	}
 	if c.classify == nil {
 		c.classify = DefaultClassifier
@@ -212,9 +222,14 @@ func (c *Client) attempt(ctx context.Context, url string) (*Response, error) {
 	defer res.Body.Close()
 
 	// The body is read here so the attempt's timeout covers it too.
-	body, err := io.ReadAll(res.Body)
+	// Reading one byte past the cap tells "exactly at the cap" from "over".
+	body, err := io.ReadAll(io.LimitReader(res.Body, c.maxBody+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	if int64(len(body)) > c.maxBody {
+		// Asking again would produce the same oversized answer.
+		return nil, permanentError{fmt.Errorf("GET %s: response body exceeds the %d byte limit", url, c.maxBody)}
 	}
 	return &Response{Status: res.StatusCode, Header: res.Header, Body: body}, nil
 }

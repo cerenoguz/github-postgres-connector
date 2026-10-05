@@ -356,3 +356,28 @@ func TestRetryAfter(t *testing.T) {
 		})
 	}
 }
+
+func TestGetRejectsOversizedBodyWithoutRetrying(t *testing.T) {
+	srv, calls := sequence(t, ok(strings.Repeat("x", 11)))
+	c, sleeps := testClient(Options{MaxBodyBytes: 10})
+
+	_, err := c.Get(context.Background(), srv.URL)
+
+	if err == nil || !strings.Contains(err.Error(), "exceeds the 10 byte limit") {
+		t.Fatalf("err = %v, want the body to be refused", err)
+	}
+	if calls.Load() != 1 || len(*sleeps) != 0 {
+		t.Errorf("calls = %d, sleeps = %v; want a single attempt", calls.Load(), *sleeps)
+	}
+}
+
+func TestGetAcceptsBodyExactlyAtTheLimit(t *testing.T) {
+	srv, _ := sequence(t, ok(strings.Repeat("x", 10)))
+	c, _ := testClient(Options{MaxBodyBytes: 10})
+
+	resp, err := c.Get(context.Background(), srv.URL)
+
+	if err != nil || len(resp.Body) != 10 {
+		t.Errorf("err = %v, want a 10 byte body accepted", err)
+	}
+}
