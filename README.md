@@ -26,22 +26,27 @@ export GITHUB_TOKEN=...                   # a personal access token
 make sync
 ```
 
+The token only needs to read commits. A fine-grained personal access token
+with read-only "Contents" access to the listed repositories is enough; public
+repositories need no permissions at all.
+
 `sync` applies any pending schema migrations, syncs each repository and prints
 a report:
 
 ```
-CONNECTOR  REPOSITORY                        STATUS  READ  INSERTED  DURATION
+CONNECTOR  RESOURCE                          STATUS  READ  INSERTED  DURATION
 github     golang/example                    ok      76    76        925ms
 github     octocat/Hello-World               ok      3     3         632ms
 github     octocat/this-repo-does-not-exist  failed  0     0         231ms
 
-3 repositories, 1 failed, 79 commits read, 79 inserted
+3 resources, 1 failed, 79 records read, 79 inserted
 
 Errors:
   github octocat/this-repo-does-not-exist: resolve head: GET https://api.github.com/...: HTTP 404: ...
 ```
 
-The report goes to stdout and structured logs go to stderr.
+A resource is whatever a connector syncs independently; for GitHub it is a
+repository. The report goes to stdout and structured logs go to stderr.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -67,8 +72,9 @@ See [config.example.yaml](config.example.yaml) for every key. Two rules:
 
 - Secrets are referenced as `${NAME}` and read from the environment. A
   reference to an unset variable is an error, never an empty string.
-- Unknown top-level keys are an error, so a typo does not silently fall back
-  to a default.
+- Unknown keys are an error at every level, including inside a connector
+  entry, so a typo such as `fetch_stat` does not silently fall back to a
+  default.
 
 ### Tests
 
@@ -130,6 +136,17 @@ from. Three properties make it reusable:
 
 Nothing in `engine`, `httpx`, `auth`, `store` or `connectors/github` changes.
 
+That claim has limits, and with only one connector built it is a design
+intention rather than something proven:
+
+- The engine and the report count records through `Batch.Len()` and speak of
+  "resources", so they hold no commit-specific logic. The store does.
+- `httpx` only does GET and only paginates through the `Link` header. That
+  fits GitHub, GitLab and Jira's REST API. Linear is GraphQL: it needs POST
+  and cursor pagination in the response body, so its connector would add a
+  request method and its own paging loop, while still reusing auth, retries,
+  rate-limit waits and timeouts.
+
 A connector for a tool with a **new kind of record** (Jira issues) also needs
 a field on `connector.Batch`, a table and a store method. Existing connectors
 still do not change. I chose typed fields over a generic `Record` interface:
@@ -181,11 +198,11 @@ for, so that `acme/widgets` on GitHub and on GitLab cannot collide.
 
 | Topic | Approach |
 | --- | --- |
-| Authorization | `auth.Authenticator` has one method, `Apply(*http.Request)`, called by the HTTP client on every attempt. Bearer (PAT), Basic and None exist; a GitHub App is another implementation, and calling it per attempt leaves room for token refresh. Extraction code never sees a credential. The token is held in `auth.Secret`, which prints `[REDACTED]` under `fmt`, `slog` and JSON, and it is only ever placed in a header, never a URL. Tests assert it is absent from logs, errors and command output. |
+| Authorization | The GitHub base URL must be `https` (plain `http` is accepted only for a server on the local machine), so the token cannot be sent in clear text. `auth.Authenticator` has one method, `Apply(*http.Request)`, called by the HTTP client on every attempt. Bearer (PAT), Basic and None exist; a GitHub App is another implementation, and calling it per attempt leaves room for token refresh. Extraction code never sees a credential. The token is held in `auth.Secret`, which prints `[REDACTED]` under `fmt`, `slog` and JSON, and it is only ever placed in a header, never a URL. Tests assert it is absent from logs, errors and command output. |
 | Retries | In `httpx.Client.Get`. Network errors, per-attempt timeouts, 429 and 500/502/503/504 are retried up to `max_retries` with exponential backoff; the upper half of each delay is random. Every other status is returned at once as a `StatusError`. |
 | Rate limiting | `Retry-After` is handled generically. GitHub's rules are a `Classifier` in the GitHub package: 403/429 with `X-RateLimit-Remaining: 0` waits until `X-RateLimit-Reset`; a 403 without those signals is a permission error and is not retried. When a *successful* response reports zero remaining, the next request is delayed until the reset, so the limit is not hit at all. Waits longer than `max_wait` fail instead of hanging. |
 | Pagination | `httpx.Client.Pages` follows `rel="next"` from the `Link` header until there is none. Only the first URL is built in code. A next link pointing at a different host is refused, since following it would send the token there. |
-| Timeouts and cancellation | Each attempt has its own timeout, covering the body read. Ctrl+C cancels the context: the request in flight and any backoff sleep stop immediately, the open transaction rolls back, remaining repositories are reported as cancelled, and the exit code is 1. A second Ctrl+C kills the process. |
+| Timeouts and cancellation | Each attempt has its own timeout, covering the body read. A response body is capped at 64 MiB. Ctrl+C cancels the context: the request in flight and any backoff sleep stop immediately, the open transaction rolls back, remaining repositories are reported as cancelled, and the exit code is 1. A second Ctrl+C kills the process. |
 | Consistency | See above. |
 | Fault isolation | The engine records a repository's error and moves on. Config mistakes are different: they stop the run before the database is touched. |
 | Logging | `log/slog`, JSON by default. Lines carry `connector` and `resource`; page lines add `page`; retry lines add `attempt`, `wait` and whether it was a rate limit. |
@@ -193,12 +210,21 @@ for, so that `acme/widgets` on GitHub and on GitLab cannot collide.
 
 ## Trade-offs
 
+- **A very large comparison is an untested risk.** I verified the compare
+  endpoint on small ranges. If GitHub cannot serve a comparison spanning a
+  long gap on a busy repository, incremental runs would keep failing for that
+  repository. `sync --full` recovers it, because the full walk does not use
+  compare and still advances the cursor. Falling back automatically after
+  repeated failures is the fix I would add.
+- **A very large first sync is fragile.** Because the cursor moves only at the
+  end, a repository that needs more requests than the hourly quota must get
+  through one or more rate-limit waits without any permanent error, or it
+  starts again from the top.
 - **Compare responses are heavier.** GitHub includes file diffs on the first
   page of a comparison. Incremental runs are usually small, so I accepted it
   in exchange for correctness.
-- **An interrupted first sync starts over.** The cursor moves only at the end,
-  so a cancelled walk of a very large repository repeats its API calls next
-  time. No data is lost or duplicated.
+- **An interrupted first sync starts over**, for the same reason. It repeats
+  its API calls next time; no data is lost or duplicated.
 - **Rows are never updated.** Commits are immutable, so `DO NOTHING` is right
   for everything except line stats: enabling `fetch_stats` later does not
   backfill rows stored without them.
