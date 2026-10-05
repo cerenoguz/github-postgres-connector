@@ -21,19 +21,21 @@ var migrations embed.FS
 // Migrate brings the schema at dsn up to the latest version and returns the
 // version it ended on. It is safe to run on every start: applied migrations
 // are skipped, and concurrent runs are serialised by an advisory lock.
-func Migrate(dsn string) (version uint, err error) {
+func Migrate(dsn string) (uint, error) {
 	// The connection is opened here rather than by handing the DSN to the
 	// migration library, which keeps the password out of its error messages.
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return 0, fmt.Errorf("configure database: %w", err)
 	}
-	defer db.Close()
 
 	driver, err := migratepgx.WithInstance(db, &migratepgx.Config{})
 	if err != nil {
+		db.Close()
 		return 0, fmt.Errorf("connect to database: %w", err)
 	}
+	// Closing the driver releases its dedicated connection and closes db.
+	defer driver.Close()
 	source, err := iofs.New(migrations, "migrations")
 	if err != nil {
 		return 0, fmt.Errorf("load migrations: %w", err)

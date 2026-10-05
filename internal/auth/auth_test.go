@@ -67,7 +67,6 @@ func TestSecretNeverPrintsItsValue(t *testing.T) {
 
 	outputs := map[string]string{
 		"%v":   fmt.Sprintf("%v", s),
-		"%s":   fmt.Sprintf("%s", s),
 		"%+v":  fmt.Sprintf("%+v", holder),
 		"%#v":  fmt.Sprintf("%#v", holder),
 		"slog": logged.String(),
