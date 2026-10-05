@@ -1,0 +1,38 @@
+{
+  "sha": "7f05d217867b2af52b0a28c6d1c91df97e1b5b39",
+  "node_id": "C_kwDOAVSzq9oAKDdmMDVkMjE3",
+  "commit": {
+    "author": {
+      "name": "Ada Lovelace",
+      "email": "ada@example.test",
+      "date": "2026-03-01T10:15:30+02:00"
+    },
+    "committer": {
+      "name": "GitHub",
+      "email": "noreply@github.com",
+      "date": "2026-03-02T08:00:00Z"
+    },
+    "message": "Merge pull request #42 from acme/feature\n\nAdd the analytical engine",
+    "tree": {
+      "sha": "9c1d1b2f0e6c3a4b5d6e7f8091a2b3c4d5e6f708",
+      "url": "https://api.github.com/repos/acme/widgets/git/trees/9c1d1b2f"
+    },
+    "url": "https://api.github.com/repos/acme/widgets/git/commits/7f05d217",
+    "comment_count": 0,
+    "verification": { "verified": true, "reason": "valid" }
+  },
+  "url": "https://api.github.com/repos/acme/widgets/commits/7f05d217867b2af52b0a28c6d1c91df97e1b5b39",
+  "html_url": "https://github.com/acme/widgets/commit/7f05d217867b2af52b0a28c6d1c91df97e1b5b39",
+  "comments_url": "https://api.github.com/repos/acme/widgets/commits/7f05d217/comments",
+  "author": {
+    "login": "ada",
+    "id": 1815,
+    "type": "User"
+  },
+  "committer": null,
+  "parents": [
+    { "sha": "53021d5c00000000000000000000000000000000" },
+    { "sha": "ca27133800000000000000000000000000000000" }
+  ],
+  "stats": { "total": 57, "additions": 45, "deletions": 12 }
+}
