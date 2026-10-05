@@ -2,59 +2,20 @@ package store
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-
 	"github.com/cerenoguz/github-postgres-connector/internal/connector"
+	"github.com/cerenoguz/github-postgres-connector/internal/store/storetest"
 )
 
 // These are integration tests: they run against a real PostgreSQL started in
 // Docker. They are skipped with -short and when Docker is not available.
 
-var (
-	containerOnce sync.Once
-	containerDSN  string
-	containerErr  error
-)
-
-// testDSN starts one PostgreSQL container for the whole package.
-func testDSN(t *testing.T) string {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("integration test: skipped with -short")
-	}
-	testcontainers.SkipIfProviderIsNotHealthy(t)
-
-	containerOnce.Do(func() {
-		ctx := context.Background()
-		ctr, err := postgres.Run(ctx, "postgres:17-alpine",
-			postgres.WithDatabase("connector"),
-			postgres.WithUsername("connector"),
-			postgres.WithPassword("connector"),
-			postgres.BasicWaitStrategies(),
-		)
-		if err != nil {
-			containerErr = err
-			return
-		}
-		// The container is removed by testcontainers' reaper when the test
-		// process exits.
-		containerDSN, containerErr = ctr.ConnectionString(ctx, "sslmode=disable")
-	})
-	if containerErr != nil {
-		t.Fatalf("start postgres: %v", containerErr)
-	}
-	return containerDSN
-}
-
 // newStore returns a store on a migrated, empty database.
 func newStore(t *testing.T) *Store {
 	t.Helper()
-	dsn := testDSN(t)
+	dsn := storetest.DSN(t)
 	if _, err := Migrate(dsn); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -93,7 +54,7 @@ func countCommits(t *testing.T, s *Store) int {
 }
 
 func TestMigrateIsRepeatable(t *testing.T) {
-	dsn := testDSN(t)
+	dsn := storetest.DSN(t)
 
 	first, err := Migrate(dsn)
 	if err != nil {
