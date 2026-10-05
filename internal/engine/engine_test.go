@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/cerenoguz/github-postgres-connector/internal/connector"
 )
@@ -214,5 +215,18 @@ func TestFullIgnoresStoredCursor(t *testing.T) {
 	}
 	if got := store.cursors["fake/a/b"]; got != "new" {
 		t.Errorf("cursor = %q, want new", got)
+	}
+}
+
+func TestResultRecordsDuration(t *testing.T) {
+	conn := &fakeConnector{
+		order:   []string{"a/b"},
+		onFetch: func(string) { time.Sleep(20 * time.Millisecond) },
+	}
+
+	report := newEngine(newMemStore()).Sync(context.Background(), []connector.Connector{conn})
+
+	if got := report.Results[0].Duration; got < 20*time.Millisecond {
+		t.Errorf("duration = %s, want at least the time the fetch took", got)
 	}
 }

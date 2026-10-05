@@ -78,8 +78,8 @@ func (e *Engine) Sync(ctx context.Context, conns []connector.Connector) Report {
 	return report
 }
 
-func (e *Engine) syncResource(ctx context.Context, c connector.Connector, resource string) Result {
-	res := Result{Source: c.Name(), Resource: resource}
+func (e *Engine) syncResource(ctx context.Context, c connector.Connector, resource string) (res Result) {
+	res = Result{Source: c.Name(), Resource: resource}
 	log := e.log.With("connector", c.Name(), "resource", resource)
 	start := time.Now()
 	defer func() { res.Duration = time.Since(start) }()
