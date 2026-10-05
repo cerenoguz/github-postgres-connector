@@ -382,6 +382,8 @@ func TestNewValidatesConfig(t *testing.T) {
 		{"too many parts", Config{Repositories: []string{"acme/widgets/extra"}}},
 		{"per_page too large", Config{Repositories: []string{repo}, PerPage: 101}},
 		{"relative base url", Config{Repositories: []string{repo}, BaseURL: "api.github.com"}},
+		{"plain http to a remote host", Config{Repositories: []string{repo}, BaseURL: "http://github.example.com/api/v3"}},
+		{"unsupported scheme", Config{Repositories: []string{repo}, BaseURL: "ftp://localhost/api"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

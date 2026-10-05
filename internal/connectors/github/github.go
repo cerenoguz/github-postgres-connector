@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -80,8 +81,14 @@ func New(cfg Config, client *httpx.Client, log *slog.Logger) (*Connector, error)
 	if base == "" {
 		base = DefaultBaseURL
 	}
-	if u, err := url.Parse(base); err != nil || u.Scheme == "" || u.Host == "" {
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("github: base URL %q is not an absolute URL", cfg.BaseURL)
+	}
+	// Plain HTTP would send the token in clear text. It is allowed only for
+	// a server on this machine, which is what tests and local proxies use.
+	if u.Scheme != "https" && !(u.Scheme == "http" && isLoopback(u.Hostname())) {
+		return nil, fmt.Errorf("github: base URL %q must use https", cfg.BaseURL)
 	}
 	perPage := cfg.PerPage
 	if perPage == 0 {
@@ -240,6 +247,14 @@ func (c *Connector) repoURL(repo, path string, query url.Values) string {
 		u += "?" + query.Encode()
 	}
 	return u
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func isStatus(err error, status int) bool {
