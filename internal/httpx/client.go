@@ -54,6 +54,9 @@ type Options struct {
 	// Headers are sent on every request.
 	Headers map[string]string
 	Logger  *slog.Logger
+	// Sleep replaces the real, cancellable wait between attempts. Tests set
+	// it to observe waits without spending them.
+	Sleep func(ctx context.Context, d time.Duration) error
 }
 
 // Response is a fully read successful response.
@@ -91,7 +94,7 @@ func New(o Options) *Client {
 		headers:  o.Headers,
 		log:      o.Logger,
 		now:      time.Now,
-		sleep:    sleepContext,
+		sleep:    o.Sleep,
 		rand:     rand.Float64,
 	}
 	if c.http == nil {
@@ -105,6 +108,9 @@ func New(o Options) *Client {
 	}
 	if c.classify == nil {
 		c.classify = DefaultClassifier
+	}
+	if c.sleep == nil {
+		c.sleep = sleepContext
 	}
 	if c.log == nil {
 		c.log = slog.New(slog.DiscardHandler)
