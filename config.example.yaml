@@ -1,0 +1,30 @@
+# Copy to config.yaml and adjust. ${NAME} is replaced by the environment
+# variable NAME; an unset variable is an error. Keep secrets out of this file.
+
+database:
+  url: ${DATABASE_URL}
+
+log:
+  level: info      # debug | info | warn | error
+  format: json     # json | text
+
+# Shared by every connector's HTTP client. These are the defaults.
+http:
+  timeout: 30s     # per request attempt
+  retry:
+    max_retries: 5 # retries after the first attempt
+    base_delay: 500ms
+    max_delay: 30s
+    max_wait: 1h   # longest rate-limit wait to sit through before failing
+
+connectors:
+  - type: github
+    auth:
+      type: bearer            # bearer | basic | none
+      token: ${GITHUB_TOKEN}
+    repositories:
+      - golang/example
+      - octocat/Hello-World
+    # per_page: 100           # 1-100
+    # fetch_stats: false      # lines added/deleted; one extra request per commit
+    # base_url: https://github.example.com/api/v3   # GitHub Enterprise Server
