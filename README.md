@@ -15,7 +15,7 @@ connector sync --config config.yaml
 
 ## Run it
 
-Requirements: Go 1.27+, and Docker for the local database and the integration
+Requirements: Go 1.26+, and Docker for the local database and the integration
 tests.
 
 ```bash
@@ -210,12 +210,13 @@ for, so that `acme/widgets` on GitHub and on GitLab cannot collide.
 
 ## Trade-offs
 
-- **A very large comparison is an untested risk.** I verified the compare
-  endpoint on small ranges. If GitHub cannot serve a comparison spanning a
-  long gap on a busy repository, incremental runs would keep failing for that
-  repository. `sync --full` recovers it, because the full walk does not use
-  compare and still advances the cursor. Falling back automatically after
-  repeated failures is the fix I would add.
+- **GitHub lists at most 10,000 commits per comparison** and silently drops
+  the oldest beyond that; I measured this on a 12,000-commit range of
+  `golang/go`. The first page reports both the true size of the range and how
+  many commits will be listed, so the connector detects the mismatch before
+  storing anything and reads the full history instead. A repository that
+  gains more than 10,000 commits between two runs therefore costs a full
+  walk rather than losing data.
 - **A very large first sync is fragile.** Because the cursor moves only at the
   end, a repository that needs more requests than the hourly quota must get
   through one or more rate-limit waits without any permanent error, or it
