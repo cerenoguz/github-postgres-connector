@@ -6,8 +6,9 @@ loads the full history; later runs load only what is new.
 
 It is written as the first of several connectors: everything that is not
 specific to GitHub (retries, rate limits, pagination, auth, cursors,
-persistence, reporting) lives in shared packages that a GitLab or Jira
-connector would reuse unchanged.
+persistence, reporting) lives in shared packages meant to be reused by a
+GitLab or Jira connector. [Adding a second connector](#adding-a-second-connector)
+says exactly what would and would not change.
 
 ```
 connector sync --config config.yaml
@@ -25,6 +26,9 @@ export DATABASE_URL='postgres://connector:connector@localhost:5432/connector?ssl
 export GITHUB_TOKEN=...                   # a personal access token
 make sync
 ```
+
+The tool reads those two variables from the environment and does not load
+`.env` files itself; [.env.example](.env.example) only lists them.
 
 The token only needs to read commits. A fine-grained personal access token
 with read-only "Contents" access to the listed repositories is enough; public
@@ -86,6 +90,10 @@ make test-unit   # only the tests that need nothing but Go
 The integration tests skip themselves, with a message, when Docker is not
 available. No test calls the real GitHub.
 
+`make lint` runs `gofmt`, `go vet` and `staticcheck`. A GitHub Actions
+workflow checks formatting, vets and runs every test, including the
+PostgreSQL ones, on each push.
+
 ## Design
 
 ```
@@ -99,6 +107,8 @@ internal/
   auth                   Authenticator implementations and the Secret type
   store                  PostgreSQL: migrations, idempotent insert, cursors
   connectors/github      the only package that knows GitHub
+    githubtest           a fake GitHub API server for tests
+  store/storetest        starts PostgreSQL in Docker for tests
 ```
 
 Dependencies point inwards. `connectors/github` imports the contract and the
@@ -148,7 +158,8 @@ intention rather than something proven:
   rate-limit waits and timeouts.
 
 A connector for a tool with a **new kind of record** (Jira issues) also needs
-a field on `connector.Batch`, a table and a store method. Existing connectors
+a field on `connector.Batch` (counted by its `Len` and `CheckResource`
+methods), a table and a store method. Existing connectors
 still do not change. I chose typed fields over a generic `Record` interface:
 it costs a shared-code change per entity kind, and in exchange the compiler
 checks every mapping and every insert.
@@ -175,9 +186,14 @@ successful sync**. A run:
 Pinning the run to one head SHA also keeps pagination stable while people keep
 pushing, and makes the new cursor exact.
 
-If the old head no longer exists (a force-push followed by garbage
-collection), GitHub answers 404 and the connector falls back to a full walk.
-That is safe because existing rows are skipped.
+The connector falls back to a full walk in two cases, both safe because
+existing rows are skipped:
+
+- The old head no longer exists (a force-push followed by garbage
+  collection), which GitHub reports as a 404.
+- The range is too large for one comparison. GitHub lists at most 10,000
+  commits and drops the oldest beyond that, so the connector checks the first
+  page for a mismatch before storing anything. See [Trade-offs](#trade-offs).
 
 ### Consistency
 
@@ -204,7 +220,7 @@ for, so that `acme/widgets` on GitHub and on GitLab cannot collide.
 | --- | --- |
 | Authorization | The GitHub base URL must be `https` (plain `http` is accepted only for a server on the local machine), so the token cannot be sent in clear text. `auth.Authenticator` has one method, `Apply(*http.Request)`, called by the HTTP client on every attempt. Bearer (PAT), Basic and None exist; a GitHub App is another implementation, and calling it per attempt leaves room for token refresh. Extraction code never sees a credential. The token is held in `auth.Secret`, which prints `[REDACTED]` under `fmt`, `slog` and JSON, and it is only ever placed in a header, never a URL. Tests assert it is absent from logs, errors and command output. |
 | Retries | In `httpx.Client.Get`. Network errors, per-attempt timeouts, 429 and 500/502/503/504 are retried up to `max_retries` with exponential backoff; the upper half of each delay is random. Every other status is returned at once as a `StatusError`. |
-| Rate limiting | `Retry-After` is handled generically. GitHub's rules are a `Classifier` in the GitHub package: 403/429 with `X-RateLimit-Remaining: 0` waits until `X-RateLimit-Reset`; a 403 without those signals is a permission error and is not retried. When a *successful* response reports zero remaining, the next request is delayed until the reset, so the limit is not hit at all. Waits longer than `max_wait` fail instead of hanging. |
+| Rate limiting | `Retry-After` is handled generically. GitHub's rules are a `Classifier` in the GitHub package: 403/429 with `X-RateLimit-Remaining: 0` waits until `X-RateLimit-Reset`; a 403 without those signals is a permission error and is not retried. When a *successful* response reports zero remaining, the next request is delayed until the reset, so the limit is not hit at all. Waits longer than `max_wait` (65 minutes by default, one GitHub quota window plus a margin) fail instead of hanging. |
 | Pagination | `httpx.Client.Pages` follows `rel="next"` from the `Link` header until there is none. Only the first URL is built in code. A next link pointing at a different host is refused, since following it would send the token there. |
 | Timeouts and cancellation | Each HTTP attempt has its own timeout, covering the body read, and a response body is capped at 64 MiB. Each database operation has one too (`database.timeout`, 30s by default), so a database that stops answering fails the repository instead of hanging the run. Ctrl+C cancels the context: the request in flight and any backoff sleep stop immediately, the open transaction rolls back, remaining repositories are reported as cancelled, and the exit code is 1. A second Ctrl+C kills the process. |
 | Consistency | See above. |
@@ -248,6 +264,16 @@ for, so that `acme/widgets` on GitHub and on GitLab cannot collide.
   other branches are not loaded.
 - **History rewritten by a force-push leaves the old rows in place.** The
   table records commits that were once on the branch.
+- **Repository names are taken as written.** GitHub ignores case and follows
+  renames, but rows and cursors are keyed by the name in the config, so
+  `Acme/Widgets` and `acme/widgets`, or a repository before and after a
+  rename, are stored as two. Keying on GitHub's numeric repository ID would
+  fix it.
+- **Two runs at the same time are safe but not coordinated.** Idempotent
+  inserts prevent duplicates, yet both runs do the same work and split the
+  INSERTED counts between them. There is no lock.
+- **Only the mapped fields are stored**, not GitHub's raw payload. Changing
+  the mapping later means fetching again.
 
 ## With more time
 
@@ -258,7 +284,9 @@ for, so that `acme/widgets` on GitHub and on GitLab cannot collide.
 - GitHub App authentication (installation tokens that refresh), which the
   per-attempt `Authenticator` call was shaped for.
 - A `sync_runs` table recording each run's counts and errors, and metrics.
-- Discover repositories from an organisation instead of listing them.
+- Discover repositories from an organisation instead of listing them, and key
+  them by GitHub's repository ID.
+- Keep the raw API payload next to the mapped columns.
 - A second connector, to test the contract against a real difference rather
   than an imagined one.
 - A container image, and scheduling.
