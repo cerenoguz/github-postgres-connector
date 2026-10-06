@@ -191,6 +191,10 @@ That is safe because existing rows are skipped.
   already there. Nothing is lost and nothing is duplicated. An end-to-end test
   fails a sync on its second page and checks the next run finishes it.
 
+The engine also refuses a page containing a record that belongs to a different
+resource than the one being synced. Rows are keyed by repository, so without
+that check a bug in one connector could write into another repository's data.
+
 The key includes `source` in addition to the repository and SHA the brief asks
 for, so that `acme/widgets` on GitHub and on GitLab cannot collide.
 
@@ -202,7 +206,7 @@ for, so that `acme/widgets` on GitHub and on GitLab cannot collide.
 | Retries | In `httpx.Client.Get`. Network errors, per-attempt timeouts, 429 and 500/502/503/504 are retried up to `max_retries` with exponential backoff; the upper half of each delay is random. Every other status is returned at once as a `StatusError`. |
 | Rate limiting | `Retry-After` is handled generically. GitHub's rules are a `Classifier` in the GitHub package: 403/429 with `X-RateLimit-Remaining: 0` waits until `X-RateLimit-Reset`; a 403 without those signals is a permission error and is not retried. When a *successful* response reports zero remaining, the next request is delayed until the reset, so the limit is not hit at all. Waits longer than `max_wait` fail instead of hanging. |
 | Pagination | `httpx.Client.Pages` follows `rel="next"` from the `Link` header until there is none. Only the first URL is built in code. A next link pointing at a different host is refused, since following it would send the token there. |
-| Timeouts and cancellation | Each attempt has its own timeout, covering the body read. A response body is capped at 64 MiB. Ctrl+C cancels the context: the request in flight and any backoff sleep stop immediately, the open transaction rolls back, remaining repositories are reported as cancelled, and the exit code is 1. A second Ctrl+C kills the process. |
+| Timeouts and cancellation | Each HTTP attempt has its own timeout, covering the body read, and a response body is capped at 64 MiB. Each database operation has one too (`database.timeout`, 30s by default), so a database that stops answering fails the repository instead of hanging the run. Ctrl+C cancels the context: the request in flight and any backoff sleep stop immediately, the open transaction rolls back, remaining repositories are reported as cancelled, and the exit code is 1. A second Ctrl+C kills the process. |
 | Consistency | See above. |
 | Fault isolation | The engine records a repository's error and moves on. Config mistakes are different: they stop the run before the database is touched. |
 | Logging | `log/slog`, JSON by default. Lines carry `connector` and `resource`; page lines add `page`; retry lines add `attempt`, `wait` and whether it was a rate limit. |
