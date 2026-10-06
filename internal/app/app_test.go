@@ -351,3 +351,16 @@ Errors:
 		t.Errorf("report =\n%s\nwant\n%s", out.String(), want)
 	}
 }
+
+func TestWriteReportUsesSingularForOne(t *testing.T) {
+	report := engine.Report{Results: []engine.Result{
+		{Source: "github", Resource: "acme/widgets", Read: 1, Inserted: 1},
+	}}
+	var out bytes.Buffer
+
+	writeReport(&out, report)
+
+	if want := "\n1 resource, 0 failed, 1 record read, 1 inserted\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("report =\n%s\nwant it to contain %q", out.String(), want)
+	}
+}

@@ -29,8 +29,8 @@ func writeReport(w io.Writer, report engine.Report) {
 	}
 	tw.Flush()
 
-	fmt.Fprintf(w, "\n%d resources, %d failed, %d records read, %d inserted\n",
-		len(report.Results), failed, read, inserted)
+	fmt.Fprintf(w, "\n%s, %d failed, %s read, %d inserted\n",
+		count(len(report.Results), "resource"), failed, count(read, "record"), inserted)
 
 	if failed > 0 {
 		fmt.Fprintln(w, "\nErrors:")
@@ -40,6 +40,14 @@ func writeReport(w io.Writer, report engine.Report) {
 			}
 		}
 	}
+}
+
+// count formats n with a noun, pluralised unless n is exactly one.
+func count(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func status(r engine.Result) string {
