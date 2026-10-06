@@ -38,7 +38,7 @@ type env struct {
 func newEnv(t *testing.T, repos []string, history ...string) *env {
 	t.Helper()
 	dsn := storetest.DSN(t)
-	if _, err := store.Migrate(dsn); err != nil {
+	if _, err := store.Migrate(context.Background(), dsn, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	db, err := pgx.Connect(context.Background(), dsn)

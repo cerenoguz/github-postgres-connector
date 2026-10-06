@@ -381,3 +381,21 @@ func TestGetAcceptsBodyExactlyAtTheLimit(t *testing.T) {
 		t.Errorf("err = %v, want a 10 byte body accepted", err)
 	}
 }
+
+func TestStatusErrorBodyIsFlattenedToOnePrintableLine(t *testing.T) {
+	srv, _ := sequence(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(401)
+		w.Write([]byte("{\n  \"message\": \"Bad credentials\",\x1b[31m\r\n  \"status\": \"401\"\n}"))
+	})
+	c, _ := testClient(Options{})
+
+	_, err := c.Get(context.Background(), srv.URL)
+
+	var se *StatusError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want a StatusError", err)
+	}
+	if want := `{ "message": "Bad credentials", [31m "status": "401" }`; se.Body != want {
+		t.Errorf("body = %q, want %q", se.Body, want)
+	}
+}

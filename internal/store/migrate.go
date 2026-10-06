@@ -1,10 +1,12 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	migratepgx "github.com/golang-migrate/migrate/v4/database/pgx/v5"
@@ -21,12 +23,22 @@ var migrations embed.FS
 // Migrate brings the schema at dsn up to the latest version and returns the
 // version it ended on. It is safe to run on every start: applied migrations
 // are skipped, and concurrent runs are serialised by an advisory lock.
-func Migrate(dsn string) (uint, error) {
+//
+// timeout bounds the first connection, so an unreachable database is reported
+// promptly instead of after the operating system's own TCP timeout.
+func Migrate(ctx context.Context, dsn string, timeout time.Duration) (uint, error) {
 	// The connection is opened here rather than by handing the DSN to the
 	// migration library, which keeps the password out of its error messages.
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return 0, fmt.Errorf("configure database: %w", err)
+	}
+
+	pingCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		db.Close()
+		return 0, fmt.Errorf("connect to database: %w", err)
 	}
 
 	driver, err := migratepgx.WithInstance(db, &migratepgx.Config{})

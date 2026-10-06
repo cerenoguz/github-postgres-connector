@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 func newStore(t *testing.T) *Store {
 	t.Helper()
 	dsn := storetest.DSN(t)
-	if _, err := Migrate(dsn); err != nil {
+	if _, err := Migrate(context.Background(), dsn, 10*time.Second); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	s, err := Open(context.Background(), dsn, 10*time.Second)
@@ -57,11 +58,11 @@ func countCommits(t *testing.T, s *Store) int {
 func TestMigrateIsRepeatable(t *testing.T) {
 	dsn := storetest.DSN(t)
 
-	first, err := Migrate(dsn)
+	first, err := Migrate(context.Background(), dsn, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Migrate(dsn)
+	second, err := Migrate(context.Background(), dsn, 10*time.Second)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -263,5 +264,35 @@ func TestOperationsTimeOutInsteadOfHanging(t *testing.T) {
 func TestOpenRejectsANonPositiveTimeout(t *testing.T) {
 	if _, err := Open(context.Background(), "postgres://localhost/app", 0); err == nil {
 		t.Error("expected an error")
+	}
+}
+
+func TestMigrateGivesUpOnADatabaseThatNeverAnswers(t *testing.T) {
+	// A server that accepts the connection and then says nothing, which is
+	// how a blackholed or overloaded database looks to a client.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
+	dsn := "postgres://user:pw@" + ln.Addr().String() + "/db?sslmode=disable"
+
+	start := time.Now()
+	_, err = Migrate(context.Background(), dsn, 300*time.Millisecond)
+
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("gave up after %s, want it bounded by the timeout", elapsed)
 	}
 }

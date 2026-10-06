@@ -83,7 +83,7 @@ func syncCommand(stdout, stderr io.Writer) *cobra.Command {
 			}
 
 			if !skipMigrations {
-				version, err := store.Migrate(string(cfg.Database.URL))
+				version, err := store.Migrate(ctx, string(cfg.Database.URL), time.Duration(cfg.Database.Timeout))
 				if err != nil {
 					return err
 				}
@@ -119,12 +119,12 @@ func migrateCommand(stdout io.Writer) *cobra.Command {
 		Use:   "migrate",
 		Short: "Apply pending schema migrations and exit",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
 				return err
 			}
-			version, err := store.Migrate(string(cfg.Database.URL))
+			version, err := store.Migrate(cmd.Context(), string(cfg.Database.URL), time.Duration(cfg.Database.Timeout))
 			if err != nil {
 				return err
 			}

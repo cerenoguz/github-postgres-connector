@@ -14,8 +14,10 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/cerenoguz/github-postgres-connector/internal/auth"
 )
@@ -295,7 +297,14 @@ type StatusError struct {
 
 func newStatusError(url string, r *Response) *StatusError {
 	const max = 200
-	body := string(r.Body)
+	// The body comes from the server and ends up in logs and the report, so
+	// it is flattened to one line of printable text first.
+	body := strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, string(r.Body))), " ")
 	if len(body) > max {
 		body = body[:max] + "..."
 	}
