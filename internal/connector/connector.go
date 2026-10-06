@@ -8,6 +8,7 @@ package connector
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -52,6 +53,18 @@ type Batch struct {
 // counts with it, so it never needs to know which kinds exist.
 func (b Batch) Len() int {
 	return len(b.Commits)
+}
+
+// CheckResource reports an error if any record belongs to a resource other
+// than the one being synced. Rows and cursors are keyed by resource, so a
+// record filed under the wrong one would corrupt another resource's data.
+func (b Batch) CheckResource(resource string) error {
+	for _, c := range b.Commits {
+		if c.Repository != resource {
+			return fmt.Errorf("commit %s belongs to %q, not to %q", c.SHA, c.Repository, resource)
+		}
+	}
+	return nil
 }
 
 // EmitFunc hands a batch to the engine for persistence. A connector must stop

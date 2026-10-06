@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,6 +55,9 @@ type fakeConnector struct {
 	gotSince  map[string]connector.Cursor
 	order     []string
 	onFetch   func(resource string)
+	// fileUnder, when set, is the repository the commits claim to belong to
+	// instead of the resource being fetched.
+	fileUnder string
 }
 
 func (f *fakeConnector) Name() string        { return "fake" }
@@ -70,7 +74,11 @@ func (f *fakeConnector) Fetch(ctx context.Context, resource string, since connec
 	for i, shas := range f.pages[resource] {
 		b := connector.Batch{Page: i + 1}
 		for _, sha := range shas {
-			b.Commits = append(b.Commits, connector.Commit{SHA: sha, Repository: resource})
+			repository := resource
+			if f.fileUnder != "" {
+				repository = f.fileUnder
+			}
+			b.Commits = append(b.Commits, connector.Commit{SHA: sha, Repository: repository})
 		}
 		if err := emit(ctx, b); err != nil {
 			return "", err
@@ -228,5 +236,28 @@ func TestResultRecordsDuration(t *testing.T) {
 
 	if got := report.Results[0].Duration; got < 20*time.Millisecond {
 		t.Errorf("duration = %s, want at least the time the fetch took", got)
+	}
+}
+
+func TestRecordsForAnotherResourceAreRejected(t *testing.T) {
+	store := newMemStore()
+	conn := &fakeConnector{
+		order:     []string{"a/b"},
+		pages:     map[string][][]string{"a/b": {{"1"}}},
+		next:      "c1",
+		fileUnder: "someone/else",
+	}
+
+	report := newEngine(store).Sync(context.Background(), []connector.Connector{conn})
+
+	res := report.Results[0]
+	if res.Err == nil || !strings.Contains(res.Err.Error(), `belongs to "someone/else", not to "a/b"`) {
+		t.Fatalf("err = %v, want the mismatch reported", res.Err)
+	}
+	if len(store.commits) != 0 || res.Inserted != 0 {
+		t.Errorf("stored = %v, inserted = %d; want nothing written", store.commits, res.Inserted)
+	}
+	if _, ok := store.cursors["fake/a/b"]; ok {
+		t.Error("the cursor advanced after a rejected page")
 	}
 }

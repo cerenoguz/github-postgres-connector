@@ -96,6 +96,10 @@ func (e *Engine) syncResource(ctx context.Context, c connector.Connector, resour
 	log.Info("sync started", "cursor", string(since), "full", e.Full)
 
 	emit := func(ctx context.Context, b connector.Batch) error {
+		// A connector bug must not write into another resource's rows.
+		if err := b.CheckResource(resource); err != nil {
+			return fmt.Errorf("page %d rejected: %w", b.Page, err)
+		}
 		inserted, err := e.store.SaveBatch(ctx, c.Name(), b)
 		if err != nil {
 			return fmt.Errorf("save page %d: %w", b.Page, err)
