@@ -155,6 +155,26 @@ func TestVanishedCursorFallsBackToTheFullHistory(t *testing.T) {
 	}
 }
 
+func TestTruncatedComparisonFallsBackToTheFullHistory(t *testing.T) {
+	// Five commits were pushed since the cursor, but a comparison lists only
+	// the newest three. Trusting it would lose c2 and c3 for good.
+	f := githubtest.New(t, "c1", "c2", "c3", "c4", "c5", "c6")
+	f.CompareLimit = 3
+	h := newHarness(t, f, Config{}, nil)
+
+	next := h.fetch(t, "c1")
+
+	if got := strings.Join(h.emitted, ","); got != "c6,c5,c4,c3,c2,c1" {
+		t.Errorf("emitted = %s, want every commit via the full walk", got)
+	}
+	if next != "c6" {
+		t.Errorf("cursor = %q, want c6", next)
+	}
+	if !strings.Contains(h.logs.String(), "too many new commits for one comparison") {
+		t.Error("the fallback was not logged")
+	}
+}
+
 func TestEmptyRepositoryIsNotAnError(t *testing.T) {
 	f := githubtest.New(t)
 	f.Empty = true

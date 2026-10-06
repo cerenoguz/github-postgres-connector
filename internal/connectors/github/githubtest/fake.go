@@ -27,6 +27,9 @@ type Fake struct {
 	// History holds the SHAs on the default branch, oldest first. Append to
 	// it between syncs to simulate pushes.
 	History []string
+	// CompareLimit is the most commits a comparison lists; zero means no
+	// limit. GitHub's is 10,000.
+	CompareLimit int
 	// Empty makes the repository answer as one without commits.
 	Empty bool
 	// Intercept may answer request number n (starting at 1) before the
@@ -86,8 +89,20 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Oldest first, like git log base..head --reverse.
-		f.writePage(w, r, f.History[from+1:to+1], func(page []map[string]any) any {
-			return map[string]any{"status": "ahead", "commits": page}
+		// Like GitHub, list only the newest CompareLimit commits of a long
+		// range while still reporting its true size in ahead_by.
+		ahead := f.History[from+1 : to+1]
+		listed := ahead
+		if f.CompareLimit > 0 && len(listed) > f.CompareLimit {
+			listed = listed[len(listed)-f.CompareLimit:]
+		}
+		f.writePage(w, r, listed, func(page []map[string]any) any {
+			return map[string]any{
+				"status":        "ahead",
+				"ahead_by":      len(ahead),
+				"total_commits": len(listed),
+				"commits":       page,
+			}
 		})
 
 	case strings.HasPrefix(path, "/commits/"):

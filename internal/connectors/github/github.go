@@ -139,13 +139,18 @@ func (c *Connector) Fetch(ctx context.Context, repo string, since connector.Curs
 		if err == nil {
 			return connector.Cursor(head), nil
 		}
-		if !isStatus(err, http.StatusNotFound) {
+		switch {
+		case errors.Is(err, errRangeTruncated):
+			log.Warn("too many new commits for one comparison, reading the full history", "previous_head", string(since))
+		case isStatus(err, http.StatusNotFound):
+			// The repository itself exists (head resolved), so the 404 is
+			// about the old head: it was force-pushed away and garbage
+			// collected.
+			log.Warn("previous head no longer exists, reading the full history", "previous_head", string(since))
+		default:
 			return "", err
 		}
-		// The repository itself exists (head resolved), so the 404 is about
-		// the old head: it was force-pushed away and garbage collected.
 		// Re-reading everything is safe because existing rows are skipped.
-		log.Warn("previous head no longer exists, reading the full history", "previous_head", string(since))
 	}
 
 	if err := c.fetchAll(ctx, repo, head, emit); err != nil {
@@ -191,17 +196,31 @@ func (c *Connector) fetchAll(ctx context.Context, repo, head string, emit connec
 	})
 }
 
+// errRangeTruncated reports a comparison that GitHub cut short.
+var errRangeTruncated = errors.New("comparison does not list every commit")
+
 // fetchRange walks the commits reachable from head but not from base.
+//
+// GitHub lists at most 10,000 commits per comparison and silently drops the
+// oldest ones beyond that. The first page says how many commits the range
+// really has (ahead_by) and how many will be listed (total_commits); when
+// they differ, nothing is emitted and errRangeTruncated is returned so the
+// caller can read the history another way.
 func (c *Connector) fetchRange(ctx context.Context, repo, base, head string, emit connector.EmitFunc) error {
 	first := c.repoURL(repo, "/compare/"+url.PathEscape(base)+"..."+url.PathEscape(head), url.Values{
 		"per_page": {strconv.Itoa(c.perPage)},
 	})
 	return c.client.Pages(ctx, first, func(page int, r *httpx.Response) error {
 		var comparison struct {
-			Commits []apiCommit `json:"commits"`
+			AheadBy      int         `json:"ahead_by"`
+			TotalCommits int         `json:"total_commits"`
+			Commits      []apiCommit `json:"commits"`
 		}
 		if err := json.Unmarshal(r.Body, &comparison); err != nil {
 			return fmt.Errorf("page %d: decode comparison: %w", page, err)
+		}
+		if page == 1 && comparison.AheadBy > comparison.TotalCommits {
+			return fmt.Errorf("%w: %d of %d", errRangeTruncated, comparison.TotalCommits, comparison.AheadBy)
 		}
 		return c.emit(ctx, repo, page, comparison.Commits, emit)
 	})
