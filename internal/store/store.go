@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,20 +14,28 @@ import (
 )
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	timeout time.Duration
 }
 
-// Open connects to the database at dsn and verifies the connection.
-func Open(ctx context.Context, dsn string) (*Store, error) {
+// Open connects to the database at dsn and verifies the connection. timeout
+// bounds every operation, including this first connection, so a database that
+// stops answering fails the operation instead of hanging the run.
+func Open(ctx context.Context, dsn string, timeout time.Duration) (*Store, error) {
+	if timeout <= 0 {
+		return nil, errors.New("database timeout must be positive")
+	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("configure database pool: %w", err)
 	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("connect to database: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	return &Store{pool: pool, timeout: timeout}, nil
 }
 
 func (s *Store) Close() { s.pool.Close() }
@@ -34,6 +43,9 @@ func (s *Store) Close() { s.pool.Close() }
 // Cursor returns the stored cursor of a resource, or the zero Cursor if it
 // has never been synced.
 func (s *Store) Cursor(ctx context.Context, source, resource string) (connector.Cursor, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
 	var c string
 	err := s.pool.QueryRow(ctx,
 		`SELECT cursor FROM sync_cursors WHERE source = $1 AND resource = $2`,
@@ -49,6 +61,9 @@ func (s *Store) Cursor(ctx context.Context, source, resource string) (connector.
 }
 
 func (s *Store) SaveCursor(ctx context.Context, source, resource string, c connector.Cursor) error {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO sync_cursors (source, resource, cursor)
 		VALUES ($1, $2, $3)
@@ -83,6 +98,9 @@ func (s *Store) SaveBatch(ctx context.Context, source string, b connector.Batch)
 	if len(b.Commits) == 0 {
 		return 0, nil
 	}
+	// One deadline for the whole batch: a timeout rolls all of it back.
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

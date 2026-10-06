@@ -3,6 +3,7 @@
 
 database:
   url: ${DATABASE_URL}
+  # timeout: 30s   # per database operation
 
 log:
   level: info      # debug | info | warn | error

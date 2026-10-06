@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -19,7 +20,7 @@ func newStore(t *testing.T) *Store {
 	if _, err := Migrate(dsn); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	s, err := Open(context.Background(), dsn)
+	s, err := Open(context.Background(), dsn, 10*time.Second)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -224,5 +225,43 @@ func TestCursorRoundTrip(t *testing.T) {
 	}
 	if c, _ := s.Cursor(ctx, "gitlab", "a/b"); c != "" {
 		t.Errorf("other source cursor = %q, want empty", c)
+	}
+}
+
+func TestOperationsTimeOutInsteadOfHanging(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	// Another session holds an exclusive lock on the table, the way a stuck
+	// migration or a manual maintenance command would.
+	blocker, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback(ctx)
+	if _, err := blocker.Exec(ctx, `LOCK TABLE commits IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	s.timeout = 200 * time.Millisecond
+
+	start := time.Now()
+	_, err = s.SaveBatch(ctx, "github", connector.Batch{Commits: []connector.Commit{commit("a/b", "sha1")}})
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a deadline error", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("gave up after %s, want it bounded by the timeout", elapsed)
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := countCommits(t, s); n != 0 {
+		t.Errorf("rows = %d, want nothing written by the timed-out batch", n)
+	}
+}
+
+func TestOpenRejectsANonPositiveTimeout(t *testing.T) {
+	if _, err := Open(context.Background(), "postgres://localhost/app", 0); err == nil {
+		t.Error("expected an error")
 	}
 }

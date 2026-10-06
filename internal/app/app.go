@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -88,7 +89,7 @@ func syncCommand(stdout, stderr io.Writer) *cobra.Command {
 				}
 				log.Info("schema is up to date", "version", version)
 			}
-			db, err := store.Open(ctx, string(cfg.Database.URL))
+			db, err := store.Open(ctx, string(cfg.Database.URL), time.Duration(cfg.Database.Timeout))
 			if err != nil {
 				return err
 			}

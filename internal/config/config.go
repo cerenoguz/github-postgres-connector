@@ -28,6 +28,9 @@ type Config struct {
 type Database struct {
 	// URL is a PostgreSQL connection string.
 	URL EnvString `yaml:"url"`
+	// Timeout bounds a single database operation: connecting, reading or
+	// writing a cursor, or storing one page.
+	Timeout Duration `yaml:"timeout"`
 }
 
 type Log struct {
@@ -128,7 +131,8 @@ var unknownField = regexp.MustCompile(`(?s)^yaml: unmarshal errors:\s+line \d+: 
 // Defaults returns the configuration used for anything the file leaves out.
 func Defaults() Config {
 	return Config{
-		Log: Log{Level: "info", Format: "json"},
+		Database: Database{Timeout: Duration(30 * time.Second)},
+		Log:      Log{Level: "info", Format: "json"},
 		HTTP: HTTP{
 			Timeout: Duration(30 * time.Second),
 			Retry: Retry{
@@ -174,6 +178,9 @@ func (c Config) validate() error {
 	var errs []error
 	if c.Database.URL == "" {
 		errs = append(errs, errors.New("database.url is required"))
+	}
+	if c.Database.Timeout <= 0 {
+		errs = append(errs, errors.New("database.timeout must be positive"))
 	}
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error":
